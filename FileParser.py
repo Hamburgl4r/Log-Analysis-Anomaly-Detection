@@ -9,6 +9,7 @@ import json
 import re
 from datetime import datetime
 from tkinter import EventType
+import pandas as pd
 
 
 class fileReader(ABC):
@@ -102,14 +103,21 @@ class CSVfile(fileReader):
 
 
 class ReaderContext:
-    def __init__(self, fileReaderStrategy:fileReader = None):
-        self.reader = fileReaderStrategy
+    def __init__(self, fileReaderStrategy: list[fileReader]):
+        self.readers = fileReaderStrategy
+        self.reader = None
 
-    def setFileReaderStrategy(self,fileReaderStrategy:fileReader):
-        self.reader = fileReaderStrategy
+    def setFileReaderStrategy(self,reader:fileReader):
+        self.reader = reader
 
     def readFile(self,filepath):
         self.reader.readFile(filepath)
+
+    def canHandle(self,filename:str):
+        for reader in self.readers:
+            if reader.canHandle(filename):
+                self.reader = reader
+                return
 
 
 
@@ -505,11 +513,126 @@ class SYSLOGparser(fileParser):
 
 class DOCKERparser(fileParser):
 
+    #fields: log, stream, time
     def parseLine(self,line):
+        if not line:
+            return None 
+        
+        try:
+            data = json.loads(line)
+        except:
+            return None
+        
+        #check for correct formated log field
 
-    def detectConfidence(self):
+        #check for correct formated stream (output media)
+
+        #check for correct formated time stamp and time stamp format
+
+        #check if in the above order
 
 
+        if "log" not in data:
+            return None
+        
+        if "stream" not in data:
+            return None
+        
+        if "time" not in data:
+            return None 
+        
+
+        if data["log"] == None or data["time"]==None:
+            return None
+
+        try:
+            dt_object = pd.to_datetime(data["time"])
+        except:
+            dt_object.replace("Z","+00:00")
+            try:
+                dt_object = pd.to_datetime(data["time"])
+            except:
+                return None
+            
+        log = data["log"].strip()
+        
+        levels = ["[INFO]","[WARN]","[ERROR]","INFO:","ERROR:","WARN:","INFO","ERROR","WARN"]
+        log_level = None
+        for level in levels:
+            if level in log:
+                log_level = level
+                break
+        
+        stream = data['stream']
+        if not log_level:
+            if stream == 'stderr':
+                log_level = "ERROR"
+
+        eventtype = None
+        eventtypefields  = {"info":"docker_log","error":"docker_error","warn":"docker_warn"}
+        for events in eventtypefields.keys:
+            if events in log_level:
+                eventtype = eventtypefields[events]
+        
+        if log_level:
+            msg  = log.split(log_level)[1]
+        msg = log
+
+
+        dt = timestamp[0].split('T')
+        sec = timestamp[1].split('T')
+        dt = dt.split('-')
+        year, month,day  = dt[0],dt[1],dt[2]
+
+        if len(data) > 3:
+            remaining_fields = data.keys()[3:]
+
+        return {
+            'message': msg,
+            'level':log_level,
+            "time": dt_object if dt_object else None,
+            'source':"Docker",
+            'event type': eventtype,
+            'raw message': log,
+            'metadata':{
+                (key, data[key]) for key in remaining_fields
+            }
+
+        }
+ 
+
+
+    def detectConfidence(self,sample):
+        score = 0.0
+        total_lines = len(sample)
+
+        if not sample:
+            return 0.0
+        
+        if total_lines == 0:
+            return 0.0
+        
+        for line in sample:
+            line = line.strip()
+
+            if line.startswith("{") and line.endswith("}"):
+                score +=0.1
+                try:
+                    data =  json.loads(line)
+                    for fields in ["log","stream","time"]:
+                        if fields in data:
+                            score +=0.3
+
+                except:
+                    return 0.0   
+                
+            if score == 0.9:
+                score = 1.0
+            else:
+                score = 0.0
+
+        return score / total_lines
+    
 
 class JSONparser(fileParser):
     def parseLine(self,line):
@@ -618,23 +741,34 @@ class JSONparser(fileParser):
                     json.loads(line)
                     score += 1.0
                 except json.JSONDecodeError:
-                    score += 0.0
+                    score = 0.0
 
             else:
-                score += 0.0
+                score = 0.0
 
         return score / total_lines
 
 
 class ParserContext:
-    def __init__(self, parsers =fileParser):
-        self.parser = parseStrategy
+    def __init__(self, parsers:fileParser = None):
+        self.parsers = parsers
+        self.parser = None
 
-    def setParseStrategy(self,parseStategy):
-        self.parser = parseStategy
+    def setParser(self,parser):
+        self.parser = parser
 
-    def parse(self):
-        self.parser.parseLine()
+    def parse(self,line):
+        yield from self.parser.parseLine(line)
+
+    def detect(self,sample):
+        confidence = 0.0
+        bestParser = None
+        for parser in self.parsers:
+            curConf = parser.detectConfidence(sample)
+            if curConf > confidence:
+                confidence = curConf
+                bestParser = parser
+        return bestParser, confidence
 
 
 def RetrieveLogFiles(folderPath=os.path.join(os.getcwd(), "logfiles")):
@@ -647,17 +781,36 @@ def RetrieveLogFiles(folderPath=os.path.join(os.getcwd(), "logfiles")):
     return logFilePaths
 
 
-class FileIn:
-    pass
-
-def parse() -> dict:
+def parse():
     #called from outside of class, facade to hide the inner working of the FileParser.py
     #enter called RetrieveLogFiles -> read the file -> parse the files -> return dict of content mapping (JSON format)
+    try:
+        logFiles = RetrieveLogFiles()
+        for files in logFiles:
+            with open(files,"r") as f:
+                pass
+            f.close()
+    except Exception as e:
+        raise e
+    
+    readerStrategies = [Textfile,JSONfile,gzfile,zipfile,logfile,logfile]
+    parserstrategies = [ApacheLOGparser,JSONparser,SYSLOGparser,DOCKERparser,HDFSparser]
+    parser = ParserContext(parserstrategies)
+    reader = ReaderContext(readerStrategies)
 
 
-def main():
-    pass
+    for filepath in logFiles:
+        
+        if not reader.canHandle(filepath):
+            continue
 
-if __name__ == "__main__":
+        for line in reader.readFile(filepath):
+            if line:
+                bParser, confidence = parser.detect(line)
+                parser.setParser(bParser)
+                yield from parser.parse(line)
+                print("Confidence level: " + confidence)
+                print("Format: ")
+                print("Length: " +len(line))
 
-    main()
+    return "Successful parse"
