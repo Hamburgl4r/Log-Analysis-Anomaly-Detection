@@ -12,109 +12,6 @@ from tkinter import EventType
 import pandas as pd
 
 
-class fileReader(ABC):
-    @abstractmethod
-    def readFile(self,filepath:str):
-        pass
-
-    @abstractmethod
-    def canHandle(self,filepath:str):
-        pass
-
-class TextFile(fileReader):
-    def readFile(self,filepath):
-        if self.canHandle(filepath):
-            with open(filepath, 'r',encoding='utf-8', errors='ignore') as f:
-                for line in f.readlines():
-                    yield line.strip()
-
-    def canHandle(self,filepath):
-        return filepath.endswith(".txt")
-
-class gzFile(fileReader):
-    def readFile(self,filepath):
-        if self.canHandle(filepath):
-            with gzip.open(filepath, 'rt', encoding='utf-8', errors='ignore') as z:
-                for file in z:
-                    yield file.strip()
-
-    def canHandle(self,filepath):
-        return filepath.endswith(".gz")
-
-class zipFile(fileReader):
-    def readFile(self,filepath):
-        if self.canHandle(filepath):
-            with z.ZipFile(filepath,"r") as z:
-                for f in z.namelist():
-                    with z.open(f,"r") as file:
-                        for line in file:
-                            yield line.decode('utf-8', errors='ignore').strip()
-    def canHandle(self,filepath:str):
-        return filepath.endswith(".zip")
-
-class logFile(fileReader):
-    def readFile(self,filepath:str):
-        if self.canHandle(filepath):
-            with open(filepath, 'r',encoding='utf-8', errors='ignore') as f:
-                for line in f.readlines():
-                    yield line.strip()
-
-    def canHandle(self,filepath:str):
-        return filepath.endswith(".log")
-    
-
-class JSONFile(fileReader):
-
-    def readFile(self,filepath:str):
-
-        if self.canHandle(filepath):
-
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as json:
-                for line in json:
-                    try:
-                        obj = json.loads(line.strip())
-                        yield json.dumps(obj)
-                    except json.JSONDecodeError:
-                        yield line.strip()
-
-
-    def canHandle(self,filepath:str):
-        return filepath.endswith(".json")
-    
-class CSVFile(fileReader):
-    def readFile(self,filepath:str):
-
-        if self.canHandle(filepath):
-
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                reader = csv.DictReader(f)
-
-                for line in reader:
-                    #join elements of the csv contents into one singular line
-                    yield ', '.join(f"{k}={v}" for k, v in line.items())
-
-    def canHandle(self,filepath:str):
-        return filepath.endswith(".csv")
-
-
-class ReaderContext:
-    def __init__(self, fileReaderStrategy: list[fileReader]):
-        self.readers = fileReaderStrategy
-        self.reader = None
-
-    def setFileReaderStrategy(self,reader:fileReader):
-        self.reader = reader
-
-    def readFile(self,filepath):
-        self.reader.readFile(filepath)
-
-    def canHandle(self,filename:str):
-        for reader in self.readers:
-            if reader.canHandle(filename):
-                self.setFileReaderStrategy(reader)
-                return 1
-        return 0
-
 
 class fileParser(ABC):
     @abstractmethod
@@ -148,8 +45,7 @@ class fileParser(ABC):
 
         return parsed_logs
 
-    def validate(self):
-        return True
+   
 
 
 
@@ -210,7 +106,7 @@ class ApacheLOGparser(fileParser):
         if status >= 500:
             level = "ERROR"
             EventType = "http_server_error"
-        if status >= 400:
+        elif status >= 400:
             level = "WARN"
             EventType = "http_client_error"
         else:
@@ -243,7 +139,14 @@ class ApacheLOGparser(fileParser):
     def detectConfidence(self,sample: list[str]):
         score = 0.0
         totalLines = len(sample)
+        if not sample:
+            return 0.0
+        
+        sample1 = [line for line in sample if line.strip()]
 
+        if not sample1:
+            return 0.0
+        
         if totalLines == 0:
             return 0.0
 
@@ -267,7 +170,7 @@ class ApacheLOGparser(fileParser):
             score += min(lineScore, 1.0)
 
         # Return average score
-        return score / lineScore
+        return score / totalLines
 
 
 class HDFSparser(fileParser):
@@ -348,9 +251,9 @@ class HDFSparser(fileParser):
         if not sample:
             return 0.0
 
-        sample = [line for line in sample if line.strip()]
+        sample1 = [line for line in sample if line.strip()]
 
-        if not sample:
+        if not sample1:
             return 0.0
 
         for line in sample:
@@ -358,7 +261,7 @@ class HDFSparser(fileParser):
             if re.match(r'^\d{6}\s\d{6}', line):
                 lineScore +=0.35
 
-            if line.contains("DataNode", "NameNode", "dfs.", "blk_"):
+            if any(keyword in line for keyword in ["DataNode", "NameNode", "dfs.", "blk_"]):
                 lineScore += 0.4
 
             if re.search(r"\[\d+\]", line):
@@ -472,9 +375,9 @@ class SYSLOGparser(fileParser):
         if not sample:
             return 0.0
 
-        sample = [line for line in sample if line.strip()]
+        sample1 = [line for line in sample if line.strip()]
 
-        if not sample:
+        if not sample1:
             return 0.0
 
         total_len = len(sample)
@@ -501,7 +404,7 @@ class SYSLOGparser(fileParser):
 
             score += min(lineScore, 1.0)
 
-        return score / lineScore
+        return score / total_len
 
 
 
@@ -541,7 +444,7 @@ class DOCKERparser(fileParser):
             return None
 
         try:
-            dt_object = pd.to_datetime(data["time"])
+            dt_object = datetime.fromisoformat(data["time"])
         except:
             dt_object.replace("Z","+00:00")
             try:
@@ -551,26 +454,24 @@ class DOCKERparser(fileParser):
             
         log = data["log"].strip()
         
-        levels = ["[INFO]","[WARN]","[ERROR]","INFO:","ERROR:","WARN:","INFO","ERROR","WARN"]
-        log_level = None
-        for level in levels:
-            if level in log:
-                log_level = level
-                break
+        pattern = re.compile(r'\[?(INFO|WARN|ERROR)\]?:?')
+
+        match = pattern.search(log)
+        log_level = match.group(0) if match else None
         
         stream = data['stream']
         if not log_level:
             if stream == 'stderr':
                 log_level = "ERROR"
 
-        eventtype = None
-        eventtypefields  = {"info":"docker_log","error":"docker_error","warn":"docker_warn"}
-        for events in eventtypefields.keys():
-            if events in log_level:
-                eventtype = eventtypefields[events]
+        eventtypefields = {"info": "docker_log", "error": "docker_error", "warn": "docker_warn"}
+
+        eventtype = next((v for k, v in eventtypefields.items() if k in log_level.lower()), None)
+
         
         if log_level:
             msg  = log.split(log_level)[1]
+            
         msg = log
 
 
@@ -583,7 +484,7 @@ class DOCKERparser(fileParser):
             'level':log_level,
             "time": dt_object if dt_object else None,
             'source':"Docker",
-            'event type': eventtype,
+            'event_type': eventtype,
             'raw message': log,
             'metadata':{
                 {key: data[key] for key in remaining_fields}
@@ -600,6 +501,11 @@ class DOCKERparser(fileParser):
         if not sample:
             return 0.0
         
+        sample1 = [line for line in sample if line.strip()]
+
+        if not sample1:
+            return 0.0
+        
         if total_lines == 0:
             return 0.0
         
@@ -607,20 +513,17 @@ class DOCKERparser(fileParser):
             line = line.strip()
 
             if line.startswith("{") and line.endswith("}"):
-                score +=0.1
+                score +=0.01
                 try:
                     data =  json.loads(line)
                     for fields in ["log","stream","time"]:
                         if fields in data:
-                            score +=0.3
+                            score +=0.33
 
                 except:
                     return 0.0   
                 
-            if score == 0.9:
-                score = 1.0
-            else:
-                score = 0.0
+           
 
         return score / total_lines
     
@@ -634,17 +537,11 @@ class JSONparser(fileParser):
             data = json.loads(line)
         except:
             return None
-
+        
+        match = re.search(r'\b')
         timestamp_fields = ["timestamp", "time", "@timestamp", "datetime", "date"]
 
-        timestamp_value = None
-        for field in timestamp_fields:
-            if field in data:
-                timestamp_value = data[field]
-                break
-
-        if timestamp_value is None:
-            return None
+        timestamp_value = next((data[field] for field in timestamp_fields if field in data),None)
 
         if isinstance(timestamp_value, str):#ISO parse attempt
             try:
@@ -675,18 +572,12 @@ class JSONparser(fileParser):
                 break
 
         msg_field = ["message", "msg", "text", "log"]
-        msg = None
-        for field in msg_field:
-            if field in data:
-                msg = str(data[field])
-                break
+        msg = next((str(data[field]) for field in msg_field if field in data),None)
+
 
         source_field = ["service", "source", "component", "logger", "name"]
-        source = None
-        for field in source_field:
-            if field in data:
-                source = str(data[field])
-                break
+        source = next((str(data[field]) for field in source_field if field in data),None)
+
         eventType = "json_event"
 
         if "event_type" in data:
@@ -709,7 +600,8 @@ class JSONparser(fileParser):
             "message": msg,
             "source": source,
             "event_type": eventType,
-            "metadata": metadata
+            "metadata": metadata,
+            "raw_message": line.strip()
         }
 
 
@@ -719,7 +611,12 @@ class JSONparser(fileParser):
 
         if not sample:
             return 0.0
+        
+        sample1 = [line for line in sample if line.strip()]
 
+        if not sample1:
+            return 0.0
+        
         if total_lines == 0:
             return 0.0
 
@@ -741,7 +638,7 @@ class JSONparser(fileParser):
 
 
 class ParserContext:
-    def __init__(self, parsers:fileParser = None):
+    def __init__(self, parsers:list[fileParser]):
         self.parsers = parsers
         self.parser = None
 
@@ -762,46 +659,3 @@ class ParserContext:
         return bestParser, confidence
 
 
-def RetrieveLogFiles(folderPath=os.path.join(os.getcwd(), "logfiles")):
-    logFilePaths = []
-    for name in os.listdir(folderPath):
-        full_path = os.path.join(folderPath, name)
-        if os.path.isfile(full_path):
-            logFilePaths.append(full_path)
-
-    return logFilePaths
-
-
-def parse():
-    #called from outside of class, facade to hide the inner working of the FileParser.py
-    #enter called RetrieveLogFiles -> read the file -> parse the files -> return dict of content mapping (JSON format)
-    try:
-        logFiles = RetrieveLogFiles()
-        for files in logFiles:
-            with open(files,"r") as f:
-                pass
-            f.close()
-    except Exception as e:
-        raise e
-    
-    readerStrategies = [TextFile,JSONFile,gzFile,zipFile,logFile,CSVFile]
-    parserstrategies = [ApacheLOGparser,JSONparser,SYSLOGparser,DOCKERparser,HDFSparser]
-    parser = ParserContext(parserstrategies)
-    reader = ReaderContext(readerStrategies)
-
-
-    for filepath in logFiles:
-        
-        if not reader.canHandle(filepath):
-            continue
-
-        for line in reader.readFile(filepath):
-            if line:
-                bParser, confidence = parser.detect(line)
-                parser.setParser(bParser)
-                yield from parser.parse(line)
-                print("Confidence level: " + confidence)
-                print("Format: ")
-                print("Length: " +len(line))
-
-    return "Successful parse"
