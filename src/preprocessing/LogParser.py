@@ -3,7 +3,7 @@ from abc import ABC,abstractmethod
 from importlib.util import source_hash
 from operator import truediv
 import gzip
-import zipfile
+import zipfile as z
 import csv
 import json
 import re
@@ -21,7 +21,7 @@ class fileReader(ABC):
     def canHandle(self,filepath:str):
         pass
 
-class Textfile(fileReader):
+class TextFile(fileReader):
     def readFile(self,filepath):
         if self.canHandle(filepath):
             with open(filepath, 'r',encoding='utf-8', errors='ignore') as f:
@@ -29,34 +29,30 @@ class Textfile(fileReader):
                     yield line.strip()
 
     def canHandle(self,filepath):
-        filetype = filepath.split(".")[1]
-        if filetype == "txt":
-            return True
+        return filepath.endswith(".txt")
 
-class gzfile(fileReader):
+class gzFile(fileReader):
     def readFile(self,filepath):
-        if self.canRead(filepath):
+        if self.canHandle(filepath):
             with gzip.open(filepath, 'rt', encoding='utf-8', errors='ignore') as z:
                 for file in z:
                     yield file.strip()
 
-    def canRead(self,filepath):
-        if filepath.endswith(".gz"):
-            return True
+    def canHandle(self,filepath):
+        return filepath.endswith(".gz")
 
-class zipfile(fileReader):
+class zipFile(fileReader):
     def readFile(self,filepath):
         if self.canHandle(filepath):
-            with zipfile.ZipFile(filepath,"r") as z:
+            with z.ZipFile(filepath,"r") as z:
                 for f in z.namelist():
                     with z.open(f,"r") as file:
                         for line in file:
                             yield line.decode('utf-8', errors='ignore').strip()
     def canHandle(self,filepath:str):
-        if filepath.endswith(".zip"):
-            return True
+        return filepath.endswith(".zip")
 
-class logfile(fileReader):
+class logFile(fileReader):
     def readFile(self,filepath:str):
         if self.canHandle(filepath):
             with open(filepath, 'r',encoding='utf-8', errors='ignore') as f:
@@ -65,8 +61,9 @@ class logfile(fileReader):
 
     def canHandle(self,filepath:str):
         return filepath.endswith(".log")
+    
 
-class JSONfile(fileReader):
+class JSONFile(fileReader):
 
     def readFile(self,filepath:str):
 
@@ -75,31 +72,29 @@ class JSONfile(fileReader):
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as json:
                 for line in json:
                     try:
-                        obj = json.load(line.strip())
+                        obj = json.loads(line.strip())
                         yield json.dumps(obj)
                     except json.JSONDecodeError:
                         yield line.strip()
 
 
     def canHandle(self,filepath:str):
-        if filepath.endswith(".json"):
-            return True
-
-class CSVfile(fileReader):
+        return filepath.endswith(".json")
+    
+class CSVFile(fileReader):
     def readFile(self,filepath:str):
 
         if self.canHandle(filepath):
 
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as csv:
-                reader = csv.DictReader(csv)
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                reader = csv.DictReader(f)
 
                 for line in reader:
                     #join elements of the csv contents into one singular line
                     yield ', '.join(f"{k}={v}" for k, v in line.items())
 
     def canHandle(self,filepath:str):
-        if filepath.endswith(".csv"):
-            return True
+        return filepath.endswith(".csv")
 
 
 class ReaderContext:
@@ -116,9 +111,9 @@ class ReaderContext:
     def canHandle(self,filename:str):
         for reader in self.readers:
             if reader.canHandle(filename):
-                self.reader = reader
-                return
-
+                self.setFileReaderStrategy(reader)
+                return 1
+        return 0
 
 
 class fileParser(ABC):
@@ -374,7 +369,7 @@ class HDFSparser(fileParser):
 
             score += min(lineScore, 1.0)
 
-        return score / lineScore
+        return score / totalLength
 
 
         
@@ -570,7 +565,7 @@ class DOCKERparser(fileParser):
 
         eventtype = None
         eventtypefields  = {"info":"docker_log","error":"docker_error","warn":"docker_warn"}
-        for events in eventtypefields.keys:
+        for events in eventtypefields.keys():
             if events in log_level:
                 eventtype = eventtypefields[events]
         
@@ -579,10 +574,6 @@ class DOCKERparser(fileParser):
         msg = log
 
 
-        dt = timestamp[0].split('T')
-        sec = timestamp[1].split('T')
-        dt = dt.split('-')
-        year, month,day  = dt[0],dt[1],dt[2]
 
         if len(data) > 3:
             remaining_fields = data.keys()[3:]
@@ -595,7 +586,7 @@ class DOCKERparser(fileParser):
             'event type': eventtype,
             'raw message': log,
             'metadata':{
-                (key, data[key]) for key in remaining_fields
+                {key: data[key] for key in remaining_fields}
             }
 
         }
@@ -793,7 +784,7 @@ def parse():
     except Exception as e:
         raise e
     
-    readerStrategies = [Textfile,JSONfile,gzfile,zipfile,logfile,logfile]
+    readerStrategies = [TextFile,JSONFile,gzFile,zipFile,logFile,CSVFile]
     parserstrategies = [ApacheLOGparser,JSONparser,SYSLOGparser,DOCKERparser,HDFSparser]
     parser = ParserContext(parserstrategies)
     reader = ReaderContext(readerStrategies)
