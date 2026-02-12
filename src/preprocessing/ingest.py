@@ -1,6 +1,6 @@
 import os
 from FileReader import TextFile,JSONFile,gzFile,zipFile,logFile,CSVFile,ReaderContext
-from LogParser.LogParser import ParserContext,ApacheLOGparser,JSONparser,SYSLOGparser,DOCKERparser,HDFSparser
+from LogParsers.LogParser import ParserContext,ApacheLOGparser,JSONparser,SYSLOGparser,DOCKERparser,HDFSparser
 
 
 def RetrieveLogFiles(folderPath=os.path.join(os.getcwd(), "logfiles")):
@@ -38,11 +38,16 @@ def parse():
             lines_length = len(lines)
         else:
             continue
-        bParser, confidence = parser.detect((lines_length/2)[:])
+        
+        bParser, confidence = parser.detect(lines[(lines_length/2):])
+
+        if confidence <=0.65:
+            return "Format not suitable/implemented."
+        
+        parser.setParser(bParser)
+
         for line in lines:
             if line:
-                
-                parser.setParser(bParser)
                 try:
                     yield from parser.parse(line)
                     print("Confidence level: " + confidence)

@@ -23,7 +23,8 @@ class TextFile(fileReader):
             with open(filepath, 'r',encoding='utf-8', errors='ignore') as f:
                 for line in f.readlines():
                     yield line.strip()
-
+            f.close()
+            
     def canHandle(self,filepath):
         return filepath.endswith(".txt")
 
@@ -33,6 +34,7 @@ class gzFile(fileReader):
             with gzip.open(filepath, 'rt', encoding='utf-8', errors='ignore') as z:
                 for file in z:
                     yield file.strip()
+            z.close()
 
     def canHandle(self,filepath):
         return filepath.endswith(".gz")
@@ -45,6 +47,9 @@ class zipFile(fileReader):
                     with z.open(f,"r") as file:
                         for line in file:
                             yield line.decode('utf-8', errors='ignore').strip()
+            z.close()
+
+
     def canHandle(self,filepath:str):
         return filepath.endswith(".zip")
 
@@ -54,6 +59,7 @@ class logFile(fileReader):
             with open(filepath, 'r',encoding='utf-8', errors='ignore') as f:
                 for line in f.readlines():
                     yield line.strip()
+            f.close()
 
     def canHandle(self,filepath:str):
         return filepath.endswith(".log")
@@ -65,14 +71,14 @@ class JSONFile(fileReader):
 
         if self.canHandle(filepath):
 
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as json:
-                for line in json:
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
                     try:
                         obj = json.loads(line.strip())
                         yield json.dumps(obj)
                     except json.JSONDecodeError:
                         yield line.strip()
-
+            f.close()
 
     def canHandle(self,filepath:str):
         return filepath.endswith(".json")
@@ -88,6 +94,7 @@ class CSVFile(fileReader):
                 for line in reader:
                     #join elements of the csv contents into one singular line
                     yield ', '.join(f"{k}={v}" for k, v in line.items())
+            f.close()
 
     def canHandle(self,filepath:str):
         return filepath.endswith(".csv")
